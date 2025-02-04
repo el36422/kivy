@@ -677,6 +677,259 @@ cdef class Point(VertexInstruction):
         self.flag_data_update()
 
 
+cdef class Plus(VertexInstruction):
+    '''A list of 2d points. Each point is represented as a plus sign
+    with a width/height of 2 times the :attr: 'markersize'.
+
+    :Parameters:
+        `points`: list
+            List of points in the format (x1, y1, x2, y2...), where each pair
+            of coordinates specifies the center of a new plus.
+        `pointsize`: float, defaults to 1.
+            The size of the point, measured from the center to the edge. A
+            value of 1.0 therefore means the real size will be 2.0 x 2.0.
+
+    .. warning::
+
+        Starting from version 1.0.7, vertex instruction have a limit of 65535
+        vertices (indices of vertex to be accurate).
+        2 entries in the list (x, y) will be converted to 4 vertices. So the
+        limit inside Plus() class is 2^15-2.
+
+    '''
+    cdef list _points
+    cdef float _pointsize
+
+    def __init__(self, **kwargs):
+        VertexInstruction.__init__(self, **kwargs)
+        v = kwargs.get('points')
+        self.points = v if v is not None else []
+        self.pointsize = kwargs.get('pointsize') or 1.
+
+    cdef void build(self):
+        cdef float x, y, ps = self._pointsize
+        cdef float ips = ps / 4  # Inner Point Size (ips)
+        cdef int i, iv, ii, count = <int>(len(self._points) * 0.5)
+        cdef list p = self.points
+        cdef float *tc = self._tex_coords
+        cdef vertex_t *vertices = NULL
+        cdef unsigned short *indices = NULL
+
+        #if there is no points...nothing to do
+        if count < 1:
+            self.batch.clear_data()
+            return
+
+        vertices = <vertex_t *>malloc(count * 12 * sizeof(vertex_t))
+        if vertices == NULL:
+            raise MemoryError('vertices')
+
+        indices = <unsigned short *>malloc(count * 14 * sizeof(unsigned short))
+        if indices == NULL:
+            free(vertices)
+            raise MemoryError('indices')
+
+        for i in xrange(count):
+            x = p[i * 2]
+            y = p[i * 2 + 1]
+            iv = i * 4
+            vertices[iv].x = x - ps
+            vertices[iv].y = y - ips
+            vertices[iv].s0 = tc[0]
+            vertices[iv].t0 = tc[1]
+            vertices[iv + 1].x = x - ips
+            vertices[iv + 1].y = y - ips
+            vertices[iv + 1].s0 = tc[2]
+            vertices[iv + 1].t0 = tc[3]
+            vertices[iv + 2].x = x - ips
+            vertices[iv + 2].y = y - ps
+            vertices[iv + 2].s0 = tc[4]
+            vertices[iv + 2].t0 = tc[5]
+            vertices[iv + 3].x = x + ips
+            vertices[iv + 3].y = y - ps
+            vertices[iv + 3].s0 = tc[6]
+            vertices[iv + 3].t0 = tc[7]
+            vertices[iv + 4].x = x + ips
+            vertices[iv + 4].y = y - ips
+            vertices[iv + 4].s0 = tc[8]
+            vertices[iv + 4].t0 = tc[9]
+            vertices[iv + 5].x = x + ps
+            vertices[iv + 5].y = y - ips
+            vertices[iv + 5].s0 = tc[10]
+            vertices[iv + 5].t0 = tc[11]
+            vertices[iv + 6].x = x + ps
+            vertices[iv + 6].y = y + ips
+            vertices[iv + 6].s0 = tc[12]
+            vertices[iv + 6].t0 = tc[13]
+            vertices[iv + 7].x = x + ips
+            vertices[iv + 7].y = y + ips
+            vertices[iv + 7].s0 = tc[14]
+            vertices[iv + 7].t0 = tc[15]
+            vertices[iv + 8].x = x + ips
+            vertices[iv + 8].y = y + ps
+            vertices[iv + 8].s0 = tc[16]
+            vertices[iv + 8].t0 = tc[17]
+            vertices[iv + 9].x = x - ips
+            vertices[iv + 9].y = y + ps
+            vertices[iv + 9].s0 = tc[18]
+            vertices[iv + 9].t0 = tc[19]
+            vertices[iv + 10].x = x - ips
+            vertices[iv + 10].y = y + ips
+            vertices[iv + 10].s0 = tc[20]
+            vertices[iv + 10].t0 = tc[21]
+            vertices[iv + 11].x = x - ps
+            vertices[iv + 11].y = y + ips
+            vertices[iv + 11].s0 = tc[22]
+            vertices[iv + 11].t0 = tc[23]
+
+            ii = i * 6
+            indices[ii] = iv
+            indices[ii + 1] = iv + 1
+            indices[ii + 2] = iv + 2
+            indices[ii + 3] = iv + 2
+            indices[ii + 4] = iv + 3
+            indices[ii + 5] = iv + 4
+            indices[ii + 6] = iv + 5
+            indices[ii + 7] = iv + 6
+            indices[ii + 8] = iv + 7
+            indices[ii + 9] = iv + 8
+            indices[ii + 10] = iv + 9
+            indices[ii + 11] = iv + 10
+            indices[ii + 12] = iv + 11
+            indices[ii + 13] = iv
+
+        self.batch.set_data(vertices, <int>(count * 4),
+                            indices, <int>(count * 6))
+
+        free(vertices)
+        free(indices)
+
+
+    def add_plus(self, float x, float y):
+        '''Add a point to the current :attr:`points` list.
+
+        If you intend to add multiple points, prefer to use this method instead
+        of reassigning a new :attr:`points` list. Assigning a new :attr:`points`
+        list will recalculate and reupload the whole buffer into the GPU.
+        If you use add_plus, it will only upload the changes.
+        '''
+        cdef float ps = self._pointsize
+        cdef float ips = ps/4
+        cdef int iv, count = <int>(len(self._points) * 0.5)
+        cdef float *tc = self._tex_coords
+        cdef vertex_t vertices[12]
+        cdef unsigned short indices[14]
+
+        if len(self._points) > 2**15 - 2:
+            raise GraphicException('Cannot add elements (limit is 2^15-2)')
+
+        self._points.append(x)
+        self._points.append(y)
+
+        vertices[0].x = x - ps
+        vertices[0].y = y - ips
+        vertices[0].s0 = tc[0]
+        vertices[0].t0 = tc[1]
+        vertices[1].x = x - ips
+        vertices[1].y = y - ips
+        vertices[1].s0 = tc[2]
+        vertices[1].t0 = tc[3]
+        vertices[2].x = x - ips
+        vertices[2].y = y - ps
+        vertices[2].s0 = tc[4]
+        vertices[2].t0 = tc[5]
+        vertices[3].x = x + ips
+        vertices[3].y = y - ps
+        vertices[3].s0 = tc[6]
+        vertices[3].t0 = tc[7]
+        vertices[4].x = x + ips
+        vertices[4].y = y - ips
+        vertices[4].s0 = tc[8]
+        vertices[4].t0 = tc[9]
+        vertices[5].x = x + ps
+        vertices[5].y = y - ips
+        vertices[5].s0 = tc[10]
+        vertices[5].t0 = tc[11]
+        vertices[6].x = x + ps
+        vertices[6].y = y + ips
+        vertices[6].s0 = tc[12]
+        vertices[6].t0 = tc[13]
+        vertices[7].x = x + ips
+        vertices[7].y = y + ips
+        vertices[7].s0 = tc[14]
+        vertices[7].t0 = tc[15]
+        vertices[8].x = x + ips
+        vertices[8].y = y + ps
+        vertices[8].s0 = tc[16]
+        vertices[8].t0 = tc[17]
+        vertices[9].x = x - ips
+        vertices[9].y = y + ps
+        vertices[9].s0 = tc[18]
+        vertices[9].t0 = tc[19]
+        vertices[10].x = x - ips
+        vertices[10].y = y + ips
+        vertices[10].s0 = tc[20]
+        vertices[10].t0 = tc[21]
+        vertices[11].x = x - ps
+        vertices[11].y = y + ips
+        vertices[11].s0 = tc[22]
+        vertices[11].t0 = tc[23]
+
+        iv = count * 4
+        indices[0] = iv
+        indices[1] = iv + 1
+        indices[2] = iv + 2
+        indices[3] = iv + 2
+        indices[4] = iv + 3
+        indices[5] = iv + 4
+        indices[6] = iv + 5
+        indices[7] = iv + 6
+        indices[8] = iv + 7
+        indices[9] = iv + 8
+        indices[10] = iv + 9
+        indices[11] = iv + 10
+        indices[12] = iv + 11
+        indices[13] = iv
+
+        # append the vertices / indices to current vertex batch
+        self.batch.append_data(vertices, 12, indices, 14)
+
+        if self.parent is not None:
+            self.parent.flag_data_update()
+
+    @property
+    def points(self):
+        '''Property for getting/settings the center points in the points list.
+        Each pair of coordinates specifies the center of a new point.
+        '''
+        return self._points
+
+    @points.setter
+    def points(self, points):
+        if self._points == points:
+            return
+        cdef list _points = list(points)
+        if len(_points) > 2**15-2:
+            raise GraphicException('Too many elements (limit is 2^15-2)')
+        self._points = list(points)
+        self.flag_data_update()
+
+    @property
+    def pointsize(self):
+        '''Property for getting/setting point size.
+        The size is measured from the center to the edge, so a value of 1.0
+        means the real size will be 2.0 x 2.0.
+        '''
+        return self._pointsize
+
+    @pointsize.setter
+    def pointsize(self, float pointsize):
+        if self._pointsize == pointsize:
+            return
+        self._pointsize = pointsize
+        self.flag_data_update()
+
+
 cdef class Triangle(VertexInstruction):
     '''A 2d triangle.
 
